@@ -73,27 +73,25 @@ const agentNavItems: BottomNavItem[] = [
 
 const fourriereNavItems: BottomNavItem[] = [
   { to: '/', label: 'Accueil', icon: <IconHome /> },
-  { to: '/reception/nouvelle', label: 'Réception', icon: <IconPlus /> },
   { to: '/reception', label: 'Reçus', icon: <IconTruck /> },
   { to: '/admin/sorties', label: 'Sorties', icon: <IconArrowRight /> },
+  { to: '/carte', label: 'Carte', icon: <IconMapPin /> },
   { to: '/profil', label: 'Profil', icon: <IconUser /> },
-  // { to: '/carte', label: 'Carte', icon: <IconMapPin /> }, // désactivé temporairement
 ]
 
 const adminNavItems: BottomNavItem[] = [
   { to: '/', label: 'Accueil', icon: <IconHome /> },
   { to: '/enlevements', label: 'Enlèv.', icon: <IconList /> },
   { to: '/reception', label: 'Récept.', icon: <IconTruck /> },
-  { to: '/stats', label: 'Stats', icon: <IconChartBar /> },
+  { to: '/carte', label: 'Carte', icon: <IconMapPin /> },
   { to: '/profil', label: 'Profil', icon: <IconUser /> },
-  // { to: '/carte', label: 'Carte', icon: <IconMapPin /> }, // désactivé temporairement
 ]
 
 const dleOfficeNavItems: BottomNavItem[] = [
   { to: '/', label: 'Accueil', icon: <IconHome /> },
   { to: '/dle/mainlevees', label: 'Mainlevées', icon: <IconDocument /> },
+  { to: '/carte', label: 'Carte', icon: <IconMapPin /> },
   { to: '/profil', label: 'Profil', icon: <IconUser /> },
-  // { to: '/carte', label: 'Carte', icon: <IconMapPin /> }, // désactivé temporairement
 ]
 
 export default function BottomNav() {

@@ -94,7 +94,7 @@ interface NavItem {
 const dleOfficeNavItems: NavItem[] = [
   { to: '/', label: 'Tableau de bord', icon: <IconDashboard />, group: '' },
   { to: '/dle/mainlevees', label: 'Mainlevées', icon: <IconDocumentCheck />, group: 'DLE Office' },
-  // { to: '/carte', label: 'Carte', icon: <IconMapPin />, group: 'DLE Office' }, // désactivé temporairement
+  { to: '/carte', label: 'Carte', icon: <IconMapPin />, group: 'DLE Office' },
   { to: '/profil', label: 'Mon profil', icon: <IconUserCircle />, group: 'DLE Office' },
 ]
 
@@ -112,7 +112,7 @@ const fourriereNavItems: NavItem[] = [
   { to: '/reception', label: 'Véhicules reçus', icon: <IconTruck />, group: 'Fourrière' },
   { to: '/admin/sorties', label: 'Sorties', icon: <IconArrowRight />, group: 'Fourrière' },
   { to: '/documents', label: 'Documents', icon: <IconDocument />, group: 'Fourrière' },
-  // { to: '/carte', label: 'Carte', icon: <IconMapPin />, group: 'Fourrière' }, // désactivé temporairement
+  { to: '/carte', label: 'Carte', icon: <IconMapPin />, group: 'Fourrière' },
   { to: '/profil', label: 'Mon profil', icon: <IconUserCircle />, group: 'Compte' },
 ]
 
@@ -123,7 +123,7 @@ const adminNavItems: NavItem[] = [
   { to: '/reception', label: 'Réceptions', icon: <IconTruck />, group: 'Fourrière' },
   { to: '/admin/sorties', label: 'Sorties', icon: <IconArrowRight />, group: 'Fourrière' },
   { to: '/documents', label: 'Documents', icon: <IconDocument />, group: 'Fourrière' },
-  // { to: '/carte', label: 'Carte', icon: <IconMapPin />, group: 'Fourrière' }, // désactivé temporairement
+  { to: '/carte', label: 'Carte', icon: <IconMapPin />, group: 'Fourrière' },
   { to: '/dle/mainlevees', label: 'Mainlevées DLE', icon: <IconDocumentCheck />, group: 'Administration' },
   { to: '/stats', label: 'Statistiques', icon: <IconChartPie />, group: 'Administration' },
   { to: '/admin/utilisateurs', label: 'Utilisateurs', icon: <IconUsers />, group: 'Administration' },

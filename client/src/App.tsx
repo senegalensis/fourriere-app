@@ -125,7 +125,6 @@ export default function App() {
               </ProtectedRoute>
             }
           />
-          {/* /carte — désactivé temporairement
           <Route
             path="/carte"
             element={
@@ -133,7 +132,7 @@ export default function App() {
                 <CartePage />
               </ProtectedRoute>
             }
-          /> */}
+          />
         </Route>
       </Routes>
     </BrowserRouter>
