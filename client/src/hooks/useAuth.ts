@@ -12,7 +12,7 @@ export function useAuth() {
     isAdmin: user?.role === 'admin',
     isAgent: user?.role === 'agent',
     isFourriere: user?.role === 'fourriere',
-    isGreffe: user?.role === 'greffe',
+    isDleOffice: user?.role === 'dle_office',
     login,
     logout,
     verify,

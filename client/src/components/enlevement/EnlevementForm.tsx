@@ -9,6 +9,7 @@ import StepRecap from './steps/StepRecap'
 import api from '@/api/client'
 import { db } from '@/db/database'
 import { useSyncStore } from '@/store/syncStore'
+import { updatePendingCount } from '@/db/syncManager'
 import { useToast } from '@/components/ui/Toast'
 
 export interface EnlevementData {
@@ -29,6 +30,7 @@ export interface EnlevementData {
     marque: string
     modele: string
     couleur: string
+    vin: string
   }
   enlevement: {
     date_enlevement: string
@@ -52,7 +54,7 @@ const STEPS = ['Autorite', 'Chauffeur', 'Vehicule', 'Enlevement', 'Photos', 'Rec
 const initialData: EnlevementData = {
   autorite: { identifiant: '', type: '', telephone: '' },
   chauffeur: { prenom: '', nom: '', matricule_plateau: '', telephone: '' },
-  vehicule: { matricule: '', marque: '', modele: '', couleur: '' },
+  vehicule: { matricule: '', marque: '', modele: '', couleur: '', vin: '' },
   enlevement: {
     date_enlevement: new Date().toISOString().split('T')[0],
     heure_enlevement: new Date().toTimeString().slice(0, 5),
@@ -85,8 +87,28 @@ export default function EnlevementForm() {
   const next = () => setStep((s) => Math.min(s + 1, STEPS.length - 1))
   const prev = () => setStep((s) => Math.max(s - 1, 0))
 
+  const saveToQueue = async (clientId: string) => {
+    await db.enlevements.add({
+      clientId,
+      data: JSON.parse(JSON.stringify(data)),
+      createdAt: new Date().toISOString(),
+      synced: false
+    })
+    await db.syncQueue.add({
+      clientId,
+      action: 'create',
+      entityType: 'enlevement',
+      payload: data,
+      createdAt: new Date().toISOString()
+    })
+    await updatePendingCount()
+  }
+
   const submit = async () => {
     setSubmitting(true)
+    // Le clientId est généré UNE SEULE FOIS avant tout essai.
+    // Si l'envoi en ligne échoue avec une erreur réseau, on réutilise ce même
+    // clientId pour la mise en queue offline → le backend dédupliquera via ON CONFLICT.
     const clientId = crypto.randomUUID()
     try {
       if (isOnline) {
@@ -133,24 +155,26 @@ export default function EnlevementForm() {
 
         toast.add('Enlevement cree avec succes', 'success')
       } else {
-        await db.enlevements.add({
-          clientId,
-          data: JSON.parse(JSON.stringify(data)),
-          createdAt: new Date().toISOString(),
-          synced: false
-        })
-        await db.syncQueue.add({
-          clientId,
-          action: 'create',
-          entityType: 'enlevement',
-          payload: data,
-          createdAt: new Date().toISOString()
-        })
+        await saveToQueue(clientId)
         toast.add('Sauvegarde hors ligne - sera synchronise', 'info')
       }
       navigate('/enlevements')
     } catch (err: any) {
-      toast.add(err.response?.data?.error || 'Erreur lors de la creation', 'error')
+      // Erreur réseau (pas de réponse serveur) : l'entrée a peut-être déjà été
+      // créée côté serveur mais la réponse a été perdue. On met en queue avec
+      // le MÊME clientId → le backend dédupliquera au prochain retry.
+      const isNetworkError = !err.response
+      if (isNetworkError) {
+        try {
+          await saveToQueue(clientId)
+          toast.add('Réseau instable - sauvegardé hors ligne, sera synchronisé', 'info')
+          navigate('/enlevements')
+        } catch {
+          toast.add('Erreur de sauvegarde locale', 'error')
+        }
+      } else {
+        toast.add(err.response?.data?.error || 'Erreur lors de la creation', 'error')
+      }
     } finally {
       setSubmitting(false)
     }

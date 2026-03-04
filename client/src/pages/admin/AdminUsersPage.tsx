@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import api from '@/api/client'
 import Spinner from '@/components/ui/Spinner'
+import Badge from '@/components/ui/Badge'
+import PageHeader from '@/components/ui/PageHeader'
 
 interface User {
   id: string
@@ -13,14 +15,16 @@ interface User {
   last_login: string | null
 }
 
-const ROLE_LABELS: Record<string, { label: string; color: string }> = {
-  admin:      { label: 'Admin',           color: 'bg-red-100 text-red-800' },
-  agent:      { label: 'Agent terrain',   color: 'bg-blue-100 text-blue-800' },
-  fourriere:  { label: 'Agent Fourrière', color: 'bg-purple-100 text-purple-800' },
-  greffe:     { label: 'Greffe',          color: 'bg-yellow-100 text-yellow-800' },
+type RoleBadgeVariant = 'danger' | 'info' | 'purple' | 'success' | 'neutral'
+
+const ROLE_LABELS: Record<string, { label: string; variant: RoleBadgeVariant }> = {
+  admin:      { label: 'Admin',           variant: 'danger' },
+  agent:      { label: 'Agent terrain',   variant: 'info' },
+  fourriere:  { label: 'Agent Fourrière', variant: 'purple' },
+  dle_office: { label: 'DLE Office',      variant: 'success' },
 }
 
-const ROLES = ['agent', 'fourriere', 'greffe', 'admin']
+const ROLES = ['agent', 'fourriere', 'dle_office', 'admin']
 
 export default function AdminUsersPage() {
   const [users, setUsers] = useState<User[]>([])
@@ -30,7 +34,6 @@ export default function AdminUsersPage() {
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
 
-  // Changement de mot de passe
   const [pwdUserId, setPwdUserId] = useState<string | null>(null)
   const [pwdUsername, setPwdUsername] = useState('')
   const [newPassword, setNewPassword] = useState('')
@@ -108,52 +111,59 @@ export default function AdminUsersPage() {
   const formatDate = (d: string | null) => d ? new Date(d).toLocaleDateString('fr-FR') : '—'
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Utilisateurs</h1>
-          <p className="text-sm text-gray-500">{users.length} compte{users.length !== 1 ? 's' : ''}</p>
-        </div>
-        <button
-          onClick={() => setShowForm(true)}
-          className="px-4 py-2 bg-primary-600 text-white rounded-lg text-sm font-medium hover:bg-primary-700"
-        >
-          + Nouveau compte
-        </button>
-      </div>
+    <div className="space-y-5 max-w-5xl">
+      <PageHeader
+        title="Utilisateurs"
+        subtitle={`${users.length} compte${users.length !== 1 ? 's' : ''}`}
+        actions={
+          <button
+            onClick={() => setShowForm(true)}
+            className="btn-primary text-sm"
+          >
+            + Nouveau compte
+          </button>
+        }
+      />
 
       {/* Formulaire de création */}
       {showForm && (
-        <form onSubmit={handleCreate} className="bg-white border-2 border-primary-200 rounded-xl p-5 space-y-4">
-          <h2 className="font-semibold text-gray-900">Créer un compte</h2>
+        <form onSubmit={handleCreate} className="bg-white rounded-2xl border-2 border-primary-200 p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold text-slate-800">Créer un compte</h2>
+            <button type="button" onClick={() => setShowForm(false)} className="text-slate-400 hover:text-slate-600">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Identifiant *</label>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Identifiant *</label>
               <input
                 type="text"
                 value={form.username}
                 onChange={e => setForm(f => ({ ...f, username: e.target.value }))}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                className="input-field"
                 required
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Mot de passe *</label>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Mot de passe *</label>
               <input
                 type="password"
                 value={form.password}
                 onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                className="input-field"
                 required
                 minLength={6}
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Rôle *</label>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Rôle *</label>
               <select
                 value={form.role}
                 onChange={e => setForm(f => ({ ...f, role: e.target.value }))}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                className="input-field"
               >
                 {ROLES.map(r => (
                   <option key={r} value={r}>{ROLE_LABELS[r]?.label || r}</option>
@@ -161,28 +171,38 @@ export default function AdminUsersPage() {
               </select>
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Email</label>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Email</label>
               <input
                 type="email"
                 value={form.email}
                 onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                className="input-field"
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Téléphone</label>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Téléphone</label>
               <input
                 type="tel"
                 value={form.telephone}
                 onChange={e => setForm(f => ({ ...f, telephone: e.target.value }))}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                className="input-field"
               />
             </div>
           </div>
           {formError && <p className="text-sm text-red-600">{formError}</p>}
           <div className="flex gap-3">
-            <button type="button" onClick={() => setShowForm(false)} className="flex-1 py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50">Annuler</button>
-            <button type="submit" disabled={saving} className="flex-1 py-2 bg-primary-600 text-white rounded-lg text-sm font-medium hover:bg-primary-700 disabled:opacity-50 flex justify-center items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowForm(false)}
+              className="btn-secondary flex-1 py-2"
+            >
+              Annuler
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="btn-primary flex-1 py-2 flex justify-center items-center gap-2"
+            >
               {saving ? <Spinner size="sm" /> : null} Créer
             </button>
           </div>
@@ -191,18 +211,28 @@ export default function AdminUsersPage() {
 
       {/* Modal changement de mot de passe */}
       {pwdUserId && (
-        <form onSubmit={handlePwdChange} className="bg-white border-2 border-orange-300 rounded-xl p-5 space-y-3">
+        <form onSubmit={handlePwdChange} className="bg-white rounded-2xl border-2 border-orange-300 p-5 space-y-3">
           <div className="flex items-center justify-between">
-            <h2 className="font-semibold text-gray-900">Changer le mot de passe — <span className="font-mono text-orange-600">{pwdUsername}</span></h2>
-            <button type="button" onClick={() => setPwdUserId(null)} className="text-gray-400 hover:text-gray-600 text-sm">✕</button>
+            <h2 className="font-semibold text-slate-800">
+              Changer le mot de passe — <span className="font-mono text-orange-600">{pwdUsername}</span>
+            </h2>
+            <button
+              type="button"
+              onClick={() => setPwdUserId(null)}
+              className="text-slate-400 hover:text-slate-600"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Nouveau mot de passe *</label>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Nouveau mot de passe *</label>
             <input
               type="password"
               value={newPassword}
               onChange={e => setNewPassword(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+              className="input-field"
               required
               minLength={6}
               placeholder="6 caractères minimum"
@@ -210,9 +240,9 @@ export default function AdminUsersPage() {
             />
           </div>
           {pwdError && <p className="text-sm text-red-600">{pwdError}</p>}
-          {pwdSuccess && <p className="text-sm text-green-600">✅ {pwdSuccess}</p>}
+          {pwdSuccess && <p className="text-sm text-green-600 font-medium">{pwdSuccess}</p>}
           <div className="flex gap-3">
-            <button type="button" onClick={() => setPwdUserId(null)} className="flex-1 py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50">Annuler</button>
+            <button type="button" onClick={() => setPwdUserId(null)} className="btn-secondary flex-1 py-2">Annuler</button>
             <button type="submit" disabled={pwdSaving} className="flex-1 py-2 bg-orange-500 text-white rounded-lg text-sm font-medium hover:bg-orange-600 disabled:opacity-50 flex justify-center items-center gap-2">
               {pwdSaving ? <Spinner size="sm" /> : null} Confirmer
             </button>
@@ -225,36 +255,36 @@ export default function AdminUsersPage() {
       ) : error ? (
         <p className="text-red-600 text-sm">{error}</p>
       ) : (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
+            <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Identifiant</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Rôle</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600 hidden md:table-cell">Email</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600 hidden lg:table-cell">Dernière connexion</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Statut</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600 uppercase tracking-wide">Identifiant</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600 uppercase tracking-wide">Rôle</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600 uppercase tracking-wide hidden md:table-cell">Email</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600 uppercase tracking-wide hidden lg:table-cell">Dernière connexion</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600 uppercase tracking-wide">Statut</th>
                 <th className="px-4 py-3"></th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody className="divide-y divide-slate-100">
               {users.map(u => (
-                <tr key={u.id} className={`hover:bg-gray-50 ${!u.actif ? 'opacity-50' : ''}`}>
-                  <td className="px-4 py-3 font-medium text-gray-900">{u.username}</td>
+                <tr key={u.id} className={`hover:bg-slate-50 transition-colors ${!u.actif ? 'opacity-50' : ''}`}>
+                  <td className="px-4 py-3 font-medium text-slate-900">{u.username}</td>
                   <td className="px-4 py-3">
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${ROLE_LABELS[u.role]?.color || 'bg-gray-100 text-gray-700'}`}>
+                    <Badge variant={ROLE_LABELS[u.role]?.variant ?? 'neutral'}>
                       {ROLE_LABELS[u.role]?.label || u.role}
-                    </span>
+                    </Badge>
                   </td>
-                  <td className="px-4 py-3 text-gray-600 hidden md:table-cell">{u.email || '—'}</td>
-                  <td className="px-4 py-3 text-gray-500 hidden lg:table-cell text-xs">{formatDate(u.last_login)}</td>
+                  <td className="px-4 py-3 text-slate-500 hidden md:table-cell">{u.email || '—'}</td>
+                  <td className="px-4 py-3 text-slate-400 hidden lg:table-cell text-xs">{formatDate(u.last_login)}</td>
                   <td className="px-4 py-3">
                     <button
                       onClick={() => toggleActif(u)}
                       className={`px-3 py-1 rounded-full text-xs font-medium cursor-pointer transition-colors ${
                         u.actif
                           ? 'bg-green-100 text-green-700 hover:bg-red-100 hover:text-red-700'
-                          : 'bg-gray-100 text-gray-500 hover:bg-green-100 hover:text-green-700'
+                          : 'bg-slate-100 text-slate-500 hover:bg-green-100 hover:text-green-700'
                       }`}
                     >
                       {u.actif ? 'Actif' : 'Inactif'}
@@ -263,7 +293,7 @@ export default function AdminUsersPage() {
                   <td className="px-4 py-3 text-right">
                     <button
                       onClick={() => openPwd(u)}
-                      className="px-3 py-1 bg-gray-100 text-gray-600 rounded-lg text-xs font-medium hover:bg-orange-100 hover:text-orange-700 transition-colors"
+                      className="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-xs font-medium hover:bg-orange-100 hover:text-orange-700 transition-colors"
                     >
                       Mot de passe
                     </button>

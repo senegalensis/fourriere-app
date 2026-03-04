@@ -2,6 +2,9 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import api from '@/api/client'
 import Spinner from '@/components/ui/Spinner'
+import Badge from '@/components/ui/Badge'
+import SearchBar from '@/components/ui/SearchBar'
+import PageHeader from '@/components/ui/PageHeader'
 
 const downloadPdf = async (url: string, filename: string) => {
   const token = localStorage.getItem('token')
@@ -33,10 +36,12 @@ interface Reception {
   created_at: string
 }
 
-const ZONE_COLORS: Record<string, string> = {
-  Sendra: 'bg-purple-100 text-purple-800',
-  Ministere: 'bg-blue-100 text-blue-800',
-  'Ville de Dakar': 'bg-green-100 text-green-800',
+type ZoneVariant = 'purple' | 'info' | 'success' | 'neutral'
+
+const ZONE_VARIANT: Record<string, ZoneVariant> = {
+  Sendra:         'purple',
+  Ministere:      'info',
+  'Ville de Dakar': 'success',
 }
 
 export default function ReceptionListPage() {
@@ -52,10 +57,7 @@ export default function ReceptionListPage() {
     setLoading(true)
     setError('')
     try {
-      const params: Record<string, string | number> = {
-        limit: LIMIT,
-        skip: pageNum * LIMIT,
-      }
+      const params: Record<string, string | number> = { limit: LIMIT, skip: pageNum * LIMIT }
       if (search) params.matricule = search
       const { data } = await api.get('/receptions', { params })
       setReceptions(data.receptions)
@@ -71,115 +73,88 @@ export default function ReceptionListPage() {
     fetchReceptions(searchMatricule, page)
   }, [page])
 
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault()
+  const handleSearch = () => {
     setPage(0)
     fetchReceptions(searchMatricule, 0)
   }
 
-  const formatDate = (d: string) =>
-    d ? new Date(d).toLocaleDateString('fr-FR') : '—'
-
+  const formatDate = (d: string) => d ? new Date(d).toLocaleDateString('fr-FR') : '—'
   const formatHeure = (h: string) => (h ? h.slice(0, 5) : '—')
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-6">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Véhicules reçus</h1>
-          <p className="text-sm text-gray-500">{total} réception{total !== 1 ? 's' : ''} au total</p>
-        </div>
-        <Link
-          to="/reception/nouvelle"
-          className="px-4 py-2 bg-primary-600 text-white rounded-lg text-sm font-medium hover:bg-primary-700"
-        >
-          + Nouvelle réception
-        </Link>
-      </div>
+    <div className="space-y-5 max-w-5xl">
+      <PageHeader
+        title="Véhicules reçus"
+        subtitle={`${total} réception${total !== 1 ? 's' : ''} au total`}
+        actions={
+          <Link to="/reception/nouvelle" className="btn-primary text-sm">
+            + Nouvelle réception
+          </Link>
+        }
+      />
 
-      {/* Barre de recherche */}
-      <form onSubmit={handleSearch} className="flex gap-3 mb-5">
-        <input
-          type="text"
-          value={searchMatricule}
-          onChange={(e) => setSearchMatricule(e.target.value.toUpperCase())}
-          placeholder="Rechercher par matricule..."
-          className="flex-1 border border-gray-300 rounded-lg px-4 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary-500"
-        />
-        <button
-          type="submit"
-          className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm hover:bg-gray-200"
-        >
-          Rechercher
-        </button>
-        {searchMatricule && (
-          <button
-            type="button"
-            onClick={() => { setSearchMatricule(''); setPage(0); fetchReceptions('', 0) }}
-            className="px-3 py-2 text-gray-500 hover:text-gray-700 text-sm"
-          >
-            ✕
-          </button>
-        )}
-      </form>
+      <SearchBar
+        value={searchMatricule}
+        onChange={setSearchMatricule}
+        onSubmit={handleSearch}
+        onClear={() => { setSearchMatricule(''); setPage(0); fetchReceptions('', 0) }}
+        placeholder="Rechercher par matricule…"
+        uppercase
+      />
 
       {loading ? (
-        <div className="flex justify-center py-16">
-          <Spinner size="lg" />
-        </div>
+        <div className="flex justify-center py-16"><Spinner size="lg" /></div>
       ) : error ? (
-        <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>
+        <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">{error}</div>
       ) : receptions.length === 0 ? (
-        <div className="text-center py-16 text-gray-500">
-          <p className="text-4xl mb-3">🏛️</p>
+        <div className="bg-white rounded-2xl border border-slate-100 shadow-sm text-center py-16 text-slate-400">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1} stroke="currentColor" className="w-12 h-12 mx-auto mb-3 text-slate-300">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 01-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 00-3.213-9.193 2.056 2.056 0 00-1.58-.86H14.25M16.5 18.75h-2.25m0-11.177v-.958c0-.568-.422-1.048-.987-1.106a48.554 48.554 0 00-10.026 0 1.106 1.106 0 00-.987 1.106v7.635m12-6.677v6.677m0 4.5v-4.5m0 0h-12" />
+          </svg>
           <p className="font-medium">Aucune réception enregistrée</p>
           {searchMatricule && <p className="text-sm mt-1">pour le matricule « {searchMatricule} »</p>}
         </div>
       ) : (
         <>
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
             <table className="w-full text-sm">
-              <thead className="bg-gray-50 border-b border-gray-200">
+              <thead className="bg-slate-50 border-b border-slate-200">
                 <tr>
-                  <th className="text-left px-4 py-3 font-medium text-gray-600">N° Entrée</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-600">Matricule</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-600 hidden sm:table-cell">Véhicule</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-600">Zone</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-600 hidden md:table-cell">Agent reçu</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-600">Date entrée</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600 uppercase tracking-wide">N° Entrée</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600 uppercase tracking-wide">Matricule</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600 uppercase tracking-wide hidden sm:table-cell">Véhicule</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600 uppercase tracking-wide">Zone</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600 uppercase tracking-wide hidden md:table-cell">Agent reçu</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600 uppercase tracking-wide">Date</th>
                   <th className="px-4 py-3"></th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
+              <tbody className="divide-y divide-slate-100">
                 {receptions.map((r) => (
-                  <tr key={r.id} className="hover:bg-gray-50 transition-colors">
+                  <tr key={r.id} className="hover:bg-slate-50 transition-colors">
                     <td className="px-4 py-3">
-                      <span className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-primary-100 text-primary-700 font-bold text-sm">
+                      <span className="inline-flex items-center justify-center w-9 h-9 rounded-full bg-primary-100 text-primary-700 font-bold text-sm">
                         {r.ordre_entree}
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      <span className="font-mono font-semibold text-gray-900">{r.vehicule_matricule}</span>
+                      <span className="font-mono font-semibold text-slate-900">{r.vehicule_matricule}</span>
                     </td>
-                    <td className="px-4 py-3 hidden sm:table-cell text-gray-700">
+                    <td className="px-4 py-3 hidden sm:table-cell text-slate-700">
                       {[r.vehicule_marque, r.vehicule_modele].filter(Boolean).join(' ') || '—'}
-                      {r.vehicule_couleur && (
-                        <span className="text-gray-400 ml-1">· {r.vehicule_couleur}</span>
-                      )}
+                      {r.vehicule_couleur && <span className="text-slate-400 ml-1">· {r.vehicule_couleur}</span>}
                     </td>
                     <td className="px-4 py-3">
                       {r.zone_placement ? (
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${ZONE_COLORS[r.zone_placement] || 'bg-gray-100 text-gray-700'}`}>
+                        <Badge variant={ZONE_VARIANT[r.zone_placement] ?? 'neutral'}>
                           {r.zone_placement}
-                        </span>
+                        </Badge>
                       ) : '—'}
                     </td>
-                    <td className="px-4 py-3 hidden md:table-cell text-gray-700">
-                      {r.agent_responsable}
-                    </td>
-                    <td className="px-4 py-3 text-gray-600">
+                    <td className="px-4 py-3 hidden md:table-cell text-slate-700">{r.agent_responsable}</td>
+                    <td className="px-4 py-3 text-slate-600 text-xs">
                       {formatDate(r.date_entree)}
-                      <span className="text-gray-400 ml-1 text-xs">{formatHeure(r.heure_entree)}</span>
+                      <span className="text-slate-400 ml-1">{formatHeure(r.heure_entree)}</span>
                     </td>
                     <td className="px-4 py-3 text-right">
                       <button
@@ -198,24 +173,21 @@ export default function ReceptionListPage() {
             </table>
           </div>
 
-          {/* Pagination */}
           {total > LIMIT && (
-            <div className="flex items-center justify-between mt-4 text-sm text-gray-600">
-              <span>
-                {page * LIMIT + 1}–{Math.min((page + 1) * LIMIT, total)} sur {total}
-              </span>
+            <div className="flex items-center justify-between text-sm text-slate-600">
+              <span>{page * LIMIT + 1}–{Math.min((page + 1) * LIMIT, total)} sur {total}</span>
               <div className="flex gap-2">
                 <button
                   onClick={() => setPage((p) => Math.max(0, p - 1))}
                   disabled={page === 0}
-                  className="px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-40"
+                  className="px-3 py-1.5 border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-40"
                 >
                   ← Précédent
                 </button>
                 <button
                   onClick={() => setPage((p) => p + 1)}
                   disabled={(page + 1) * LIMIT >= total}
-                  className="px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-40"
+                  className="px-3 py-1.5 border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-40"
                 >
                   Suivant →
                 </button>

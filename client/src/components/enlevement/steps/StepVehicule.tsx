@@ -2,8 +2,8 @@ import { useState } from 'react'
 import VehiculeOCRScanner from '../VehiculeOCRScanner'
 
 interface Props {
-  data: { matricule: string; marque: string; modele: string; couleur: string }
-  onChange: (data: { matricule: string; marque: string; modele: string; couleur: string }) => void
+  data: { matricule: string; marque: string; modele: string; couleur: string; vin: string }
+  onChange: (data: { matricule: string; marque: string; modele: string; couleur: string; vin: string }) => void
 }
 
 const COULEURS = ['Blanc', 'Noir', 'Gris', 'Bleu', 'Rouge', 'Vert', 'Jaune', 'Marron', 'Beige', 'Orange', 'Autre']
@@ -77,6 +77,19 @@ export default function StepVehicule({ data, onChange }: Props) {
             <option key={c} value={c}>{c}</option>
           ))}
         </select>
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">
+          Numéro de série / VIN <span className="text-gray-400 font-normal">(optionnel)</span>
+        </label>
+        <input
+          type="text"
+          value={data.vin}
+          onChange={(e) => onChange({ ...data, vin: e.target.value.toUpperCase() })}
+          className="input-field font-mono"
+          placeholder="Ex : VF1RFD00H56789012"
+        />
       </div>
     </div>
   )

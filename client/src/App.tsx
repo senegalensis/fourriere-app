@@ -11,7 +11,13 @@ import ReceptionPage from '@/pages/ReceptionPage'
 import ReceptionListPage from '@/pages/ReceptionListPage'
 import AdminUsersPage from '@/pages/admin/AdminUsersPage'
 import AdminSortiesPage from '@/pages/admin/AdminSortiesPage'
+import AdminLogsPage from '@/pages/admin/AdminLogsPage'
 import DocumentsPage from '@/pages/DocumentsPage'
+import StatsPage from '@/pages/StatsPage'
+import ProfilePage from '@/pages/ProfilePage'
+import PublicSearchPage from '@/pages/PublicSearchPage'
+import DLEOfficePage from '@/pages/DLEOfficePage'
+import CartePage from '@/pages/CartePage'
 import ToastContainer from '@/components/ui/Toast'
 import { initSyncListeners } from '@/db/syncManager'
 import { useOnlineStatus } from '@/hooks/useOnlineStatus'
@@ -28,6 +34,7 @@ export default function App() {
       <ToastContainer />
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/recherche" element={<PublicSearchPage />} />
         <Route
           element={
             <ProtectedRoute>
@@ -93,6 +100,40 @@ export default function App() {
             }
           />
           <Route path="/documents" element={<DocumentsPage />} />
+          <Route
+            path="/stats"
+            element={
+              <ProtectedRoute allowedRoles={['admin']}>
+                <StatsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/logs"
+            element={
+              <ProtectedRoute allowedRoles={['admin']}>
+                <AdminLogsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route path="/profil" element={<ProfilePage />} />
+          <Route
+            path="/dle/mainlevees"
+            element={
+              <ProtectedRoute allowedRoles={['admin', 'dle_office']}>
+                <DLEOfficePage />
+              </ProtectedRoute>
+            }
+          />
+          {/* /carte — désactivé temporairement
+          <Route
+            path="/carte"
+            element={
+              <ProtectedRoute allowedRoles={['admin', 'fourriere', 'dle_office']}>
+                <CartePage />
+              </ProtectedRoute>
+            }
+          /> */}
         </Route>
       </Routes>
     </BrowserRouter>

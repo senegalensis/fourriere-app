@@ -23,7 +23,10 @@ export async function drainQueue() {
         if (item.entityType === 'enlevement' && item.action === 'create') {
           const payload = item.payload
 
-          // Créer le chauffeur s'il a été saisi hors ligne (pas d'ID existant)
+          // Créer le chauffeur s'il a été saisi hors ligne (pas d'ID existant).
+          // On mémorise l'ID dans le queue item dès sa création pour ne pas
+          // recréer un doublon chauffeur si l'étape suivante échoue et que
+          // cet item est rejoué.
           let chauffeurId: string | undefined = payload.chauffeur?.id
           if (!chauffeurId && payload.chauffeur?.prenom && payload.chauffeur?.nom) {
             const { data: ch } = await api.post('/chauffeurs', {
@@ -33,6 +36,12 @@ export async function drainQueue() {
               matricule_plateau: payload.chauffeur.matricule_plateau || '',
             })
             chauffeurId = ch.id
+            // Persister l'ID du chauffeur dans le payload pour les retries
+            if (item.id) {
+              await db.syncQueue.update(item.id, {
+                payload: { ...payload, chauffeur: { ...payload.chauffeur, id: ch.id } }
+              })
+            }
           }
 
           const { data: enlevement } = await api.post('/enlevements', {

@@ -4,6 +4,8 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const PDFDocument = require('pdfkit');
+const path = require('path');
+const fs = require('fs');
 require('dotenv').config();
 
 const app = express();
@@ -38,6 +40,40 @@ pool.connect((err, client, release) => {
         release();
     }
 });
+
+// ========== AUTO-MIGRATION ==========
+pool.query(`
+    ALTER TABLE enlevements ADD COLUMN IF NOT EXISTS vehicule_vin VARCHAR(50);
+    ALTER TABLE enlevements ADD COLUMN IF NOT EXISTS proprietaire_adresse TEXT;
+    ALTER TABLE enlevements ADD COLUMN IF NOT EXISTS proprietaire_telephone VARCHAR(30);
+    ALTER TABLE enlevements ADD COLUMN IF NOT EXISTS reference_paiement VARCHAR(100);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS enlevements_client_id_unique
+        ON enlevements (client_id) WHERE client_id IS NOT NULL;
+
+    CREATE TABLE IF NOT EXISTS mainlevees (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        enlevement_id UUID NOT NULL REFERENCES enlevements(id) ON DELETE CASCADE,
+        dle_nom VARCHAR(200) NOT NULL,
+        dle_grade VARCHAR(100),
+        date_mainlevee DATE NOT NULL,
+        statut VARCHAR(20) DEFAULT 'active' CHECK (statut IN ('active', 'utilisee')),
+        created_by UUID REFERENCES users(id),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+`).then(async () => {
+    // Ajouter dle_office au CHECK constraint si nécessaire
+    await pool.query(`
+        DO $$
+        BEGIN
+            ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
+            ALTER TABLE users ADD CONSTRAINT users_role_check
+                CHECK (role IN ('admin','agent','fourriere','public','dle_office'));
+        END$$;
+    `).catch(() => {});
+    console.log('✅ Migration OK');
+})
+  .catch(e => console.error('⚠️  Migration:', e.message));
 
 // Middleware d'authentification
 const authenticate = async (req, res, next) => {
@@ -194,6 +230,24 @@ app.get('/api/auth/verify', authenticate, (req, res) => {
             role: req.user.role
         }
     });
+});
+
+// Changement de mot de passe (utilisateur connecté)
+app.put('/api/auth/password', authenticate, async (req, res) => {
+    try {
+        const { current_password, new_password } = req.body;
+        if (!current_password || !new_password) return res.status(400).json({ error: 'Champs requis' });
+        if (new_password.length < 6) return res.status(400).json({ error: 'Nouveau mot de passe trop court (6 caractères min)' });
+        const result = await pool.query('SELECT password FROM users WHERE id = $1', [req.user.id]);
+        if (result.rows.length === 0) return res.status(404).json({ error: 'Utilisateur non trouvé' });
+        const valid = await bcrypt.compare(current_password, result.rows[0].password);
+        if (!valid) return res.status(401).json({ error: 'Mot de passe actuel incorrect' });
+        const hashed = await bcrypt.hash(new_password, 10);
+        await pool.query('UPDATE users SET password = $1 WHERE id = $2', [hashed, req.user.id]);
+        res.json({ message: 'Mot de passe mis à jour avec succès' });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
 });
 
 // ========== CHAUFFEURS ==========
@@ -373,16 +427,28 @@ app.post('/api/enlevements', authenticate, logActivity, async (req, res) => {
             client_id
         } = req.body;
 
+        // Déduplication par client_id : si la requête a déjà été traitée
+        // (ex : réponse perdue en chemin → retry client), on retourne l'entrée existante
+        if (client_id) {
+            const existing = await client.query(
+                'SELECT * FROM enlevements WHERE client_id = $1', [client_id]
+            );
+            if (existing.rows.length > 0) {
+                await client.query('ROLLBACK');
+                return res.status(200).json(existing.rows[0]);
+            }
+        }
+
         const result = await client.query(
             `INSERT INTO enlevements (
                 agent, agent_id,
-                vehicule_matricule, vehicule_marque, vehicule_modele, vehicule_couleur,
+                vehicule_matricule, vehicule_marque, vehicule_modele, vehicule_couleur, vehicule_vin,
                 cadre_saisie, etat_vehicule, commentaires,
                 gps_latitude, gps_longitude, gps_accuracy, gps_adresse,
                 autorite_identifiant, autorite_type,
                 chauffeur_id, date_enlevement, heure_enlevement, lieu_enlevement,
                 agent_collecte, responsable, client_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
             RETURNING *`,
             [
                 req.user.username,
@@ -391,6 +457,7 @@ app.post('/api/enlevements', authenticate, logActivity, async (req, res) => {
                 vehicule.marque,
                 vehicule.modele,
                 vehicule.couleur,
+                vehicule.vin || null,
                 details.cadre,
                 details.etat,
                 details.commentaires,
@@ -1041,6 +1108,17 @@ app.get('/api/stats/agent/:username', authenticate, async (req, res) => {
     }
 });
 
+// Stats de tous les agents (admin uniquement)
+app.get('/api/stats/agents', authenticate, async (req, res) => {
+    try {
+        if (req.user.role !== 'admin') return res.status(403).json({ error: 'Accès refusé' });
+        const result = await pool.query('SELECT * FROM stats_par_agent');
+        res.json(result.rows);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // ========== ADMINISTRATION ==========
 
 // Lister tous les utilisateurs (admin uniquement)
@@ -1108,8 +1186,18 @@ app.post('/api/admin/sorties', authenticate, logActivity, async (req, res) => {
         await client.query('BEGIN');
 
         const { enlevement_id, sortie_proprietaire, sortie_agent, sortie_montant_paye, sortie_mode_paiement,
-                date_main_levee, bon_sortie_sendra, date_paiement_vae, motif_sortie } = req.body;
+                date_main_levee, bon_sortie_sendra, date_paiement_vae, motif_sortie,
+                proprietaire_adresse, proprietaire_telephone, reference_paiement } = req.body;
         if (!enlevement_id) return res.status(400).json({ error: 'enlevement_id requis' });
+
+        // Vérifier qu'une mainlevée active existe
+        const mainleveeCheck = await client.query(
+            `SELECT id FROM mainlevees WHERE enlevement_id = $1 AND statut = 'active'`,
+            [enlevement_id]
+        );
+        if (mainleveeCheck.rows.length === 0) {
+            throw new Error('Aucune mainlevée active pour ce véhicule. La mainlevée DLE Office est obligatoire avant la sortie.');
+        }
 
         const result = await client.query(
             `UPDATE enlevements
@@ -1123,22 +1211,31 @@ app.post('/api/admin/sorties', authenticate, logActivity, async (req, res) => {
                  date_main_levee = $6,
                  bon_sortie_sendra = $7,
                  date_paiement_vae = $8,
-                 motif_sortie = $9
+                 motif_sortie = $9,
+                 proprietaire_adresse = $10,
+                 proprietaire_telephone = $11,
+                 reference_paiement = $12
              WHERE id = $1 AND statut = 'au_parc'
              RETURNING *`,
             [enlevement_id, sortie_proprietaire || null, sortie_agent || req.user.username,
              sortie_montant_paye || null, sortie_mode_paiement || null,
              date_main_levee || null, bon_sortie_sendra || null,
-             date_paiement_vae || null, motif_sortie || null]
+             date_paiement_vae || null, motif_sortie || null,
+             proprietaire_adresse || null, proprietaire_telephone || null, reference_paiement || null]
         );
         if (result.rows.length === 0) {
             throw new Error('Véhicule non trouvé ou déjà sorti');
         }
 
+        // Marquer la mainlevée comme utilisée
+        await client.query(
+            `UPDATE mainlevees SET statut = 'utilisee' WHERE enlevement_id = $1 AND statut = 'active'`,
+            [enlevement_id]
+        );
+
         // Libérer l'emplacement parking si occupé
         await client.query(
-            `UPDATE parking_spots SET occupied = false, vehicle_id = NULL
-             WHERE vehicle_id = $1`,
+            `UPDATE parking_spots SET occupied = false, vehicle_id = NULL WHERE vehicle_id = $1`,
             [enlevement_id]
         );
 
@@ -1152,16 +1249,18 @@ app.post('/api/admin/sorties', authenticate, logActivity, async (req, res) => {
     }
 });
 
-// Véhicules actuellement au parc (admin et fourrière)
+// Véhicules actuellement au parc (admin, fourrière, dle_office)
 app.get('/api/admin/au-parc', authenticate, async (req, res) => {
     try {
-        if (!['admin', 'fourriere'].includes(req.user.role)) return res.status(403).json({ error: 'Accès refusé' });
+        if (!['admin', 'fourriere', 'dle_office'].includes(req.user.role)) return res.status(403).json({ error: 'Accès refusé' });
         const result = await pool.query(
             `SELECT e.*,
                     r.ordre_entree, r.zone_placement, r.agent_responsable, r.date_entree, r.heure_entree,
-                    EXTRACT(DAY FROM (NOW() - COALESCE(e.date_entree_parc, e.timestamp))) AS jours_parc
+                    EXTRACT(DAY FROM (NOW() - COALESCE(e.date_entree_parc, e.timestamp))) AS jours_parc,
+                    m.id AS mainlevee_id, m.dle_nom, m.dle_grade, m.date_mainlevee, m.statut AS mainlevee_statut
              FROM enlevements e
              LEFT JOIN receptions r ON r.enlevement_id = e.id
+             LEFT JOIN mainlevees m ON m.enlevement_id = e.id AND m.statut = 'active'
              WHERE e.statut = 'au_parc'
              ORDER BY e.date_entree_parc ASC NULLS LAST`
         );
@@ -1171,7 +1270,91 @@ app.get('/api/admin/au-parc', authenticate, async (req, res) => {
     }
 });
 
+// ========== MAINLEVÉES ==========
+
+// Créer une mainlevée (dle_office + admin)
+app.post('/api/mainlevees', authenticate, logActivity, async (req, res) => {
+    try {
+        if (!['admin', 'dle_office'].includes(req.user.role)) return res.status(403).json({ error: 'Accès refusé' });
+        const { enlevement_id, dle_nom, dle_grade, date_mainlevee } = req.body;
+        if (!enlevement_id || !dle_nom || !date_mainlevee) {
+            return res.status(400).json({ error: 'enlevement_id, dle_nom et date_mainlevee sont requis' });
+        }
+        // Vérifier que le véhicule est bien au parc
+        const check = await pool.query(
+            `SELECT id, vehicule_matricule FROM enlevements WHERE id = $1 AND statut = 'au_parc'`,
+            [enlevement_id]
+        );
+        if (check.rows.length === 0) {
+            return res.status(400).json({ error: 'Véhicule non trouvé ou pas au statut "au_parc"' });
+        }
+        // Désactiver toute mainlevée active existante
+        await pool.query(
+            `UPDATE mainlevees SET statut = 'utilisee' WHERE enlevement_id = $1 AND statut = 'active'`,
+            [enlevement_id]
+        );
+        const result = await pool.query(
+            `INSERT INTO mainlevees (enlevement_id, dle_nom, dle_grade, date_mainlevee, created_by)
+             VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+            [enlevement_id, dle_nom, dle_grade || null, date_mainlevee, req.user.id]
+        );
+        res.status(201).json(result.rows[0]);
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+// Lister les mainlevées (dle_office + admin)
+app.get('/api/mainlevees', authenticate, async (req, res) => {
+    try {
+        if (!['admin', 'dle_office'].includes(req.user.role)) return res.status(403).json({ error: 'Accès refusé' });
+        const { limit = 50, skip = 0 } = req.query;
+        const result = await pool.query(
+            `SELECT m.*, e.vehicule_matricule, e.vehicule_marque, e.vehicule_modele, e.vehicule_couleur, e.vehicule_vin,
+                    e.cadre_saisie, e.date_enlevement, e.timestamp,
+                    u.username as dle_username
+             FROM mainlevees m
+             JOIN enlevements e ON m.enlevement_id = e.id
+             LEFT JOIN users u ON m.created_by = u.id
+             ORDER BY m.created_at DESC
+             LIMIT $1 OFFSET $2`,
+            [limit, skip]
+        );
+        const countResult = await pool.query('SELECT COUNT(*) FROM mainlevees');
+        res.json({ mainlevees: result.rows, total: parseInt(countResult.rows[0].count) });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Mainlevée d'un véhicule spécifique
+app.get('/api/mainlevees/vehicule/:enlevement_id', authenticate, async (req, res) => {
+    try {
+        if (!['admin', 'dle_office', 'fourriere'].includes(req.user.role)) return res.status(403).json({ error: 'Accès refusé' });
+        const result = await pool.query(
+            `SELECT m.*, e.vehicule_matricule, e.vehicule_marque, e.vehicule_modele, e.vehicule_vin,
+                    e.cadre_saisie, e.date_enlevement, e.timestamp
+             FROM mainlevees m
+             JOIN enlevements e ON m.enlevement_id = e.id
+             WHERE m.enlevement_id = $1
+             ORDER BY m.created_at DESC`,
+            [req.params.enlevement_id]
+        );
+        res.json(result.rows);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // ========== PDF ==========
+
+const LOGO_PATH = path.join(__dirname, 'assets', 'logo-entete.png');
+
+const ORG_LINE1  = 'Direction Générale du Cadre de Vie';
+const ORG_LINE2  = 'Direction de la Lutte contre les Encombrements';
+const ORG_COORDS = '+221 33 826 05 91  ·  contact@cadredevie.sn  ·  www.cadredevie.sn';
+const FOOTER_TXT = 'Direction Générale du Cadre de Vie  ·  Dakar, Sénégal';
+const FOOTER_WEB = 'www.cadredevie.sn';
 
 // Utilitaire : formater une date française
 function fmtDate(d) {
@@ -1185,29 +1368,86 @@ function fmtTime(t) {
     return String(t).slice(0, 5);
 }
 
-// Utilitaire : construire le PDF avec les sections communes
-function buildPdf(doc, type, enlevement, chauffeur) {
-    // En-tête
-    doc.fontSize(10).font('Helvetica').fillColor('#555555')
-       .text('DIRECTION GESTION DU CADRE DE VIE', { align: 'center' });
-    doc.fontSize(16).font('Helvetica-Bold').fillColor('#1a1a1a')
-       .text(type, { align: 'center' });
-    doc.fontSize(9).font('Helvetica').fillColor('#888888')
-       .text(`Généré le ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`, { align: 'center' });
+// Pied de page — désactive temporairement la marge basse pour dessiner dans la zone footer
+// sans déclencher de saut de page (PDFKit compare doc.y + lineHeight > maxY = page.height - margin.bottom)
+function addFooter(doc) {
+    const W = doc.page.width;
+    const footerY = doc.page.height - 55; // ~787pt sur A4
 
-    doc.moveDown(1);
-    doc.moveTo(50, doc.y).lineTo(550, doc.y).lineWidth(1).strokeColor('#cccccc').stroke();
+    // Suspend la marge basse → maxY devient page.height → plus de page break dans la zone footer
+    const savedBottom = doc.page.margins.bottom;
+    doc.page.margins.bottom = 0;
+
+    doc.moveTo(50, footerY - 8).lineTo(W - 50, footerY - 8)
+       .lineWidth(0.5).strokeColor('#aaaaaa').stroke();
+    doc.fontSize(7.5).font('Helvetica').fillColor('#888888')
+       .text(FOOTER_TXT, 50, footerY, { width: W - 250, align: 'left', lineBreak: false });
+    doc.fontSize(7.5).font('Helvetica').fillColor('#888888')
+       .text(FOOTER_WEB, W - 200, footerY, { width: 150, align: 'right', lineBreak: false });
+
+    doc.page.margins.bottom = savedBottom;
+}
+
+// Génère un PDF en mémoire et renvoie un Buffer (évite les conflits de stream)
+function renderPdfToBuffer(buildFn) {
+    return new Promise((resolve, reject) => {
+        const doc = new PDFDocument({ margin: 50, size: 'A4' });
+        const chunks = [];
+        doc.on('data', chunk => chunks.push(chunk));
+        doc.on('end', () => resolve(Buffer.concat(chunks)));
+        doc.on('error', reject);
+        try {
+            buildFn(doc);
+            doc.end();
+        } catch (err) {
+            reject(err);
+        }
+    });
+}
+
+// En-tête + sections communes VÉHICULE / ENLÈVEMENT
+function buildPdf(doc, type, enlevement, chauffeur) {
+    const W = doc.page.width;
+
+    // ── Logo ─────────────────────────────────────────────────────
+    if (fs.existsSync(LOGO_PATH)) {
+        doc.image(LOGO_PATH, 50, 18, { height: 62 });
+    }
+
+    // ── Informations organisation (droite) ────────────────────────
+    doc.fontSize(10.5).font('Helvetica-Bold').fillColor('#1a3a5c')
+       .text(ORG_LINE1, 50, 20, { align: 'right', width: W - 100 });
+    doc.fontSize(8.5).font('Helvetica').fillColor('#555555')
+       .text(ORG_LINE2, { align: 'right', width: W - 100 });
+    doc.fontSize(7.5).fillColor('#777777')
+       .text(ORG_COORDS, { align: 'right', width: W - 100 });
+
+    // ── Ligne séparatrice bleue ───────────────────────────────────
+    doc.moveTo(50, 95).lineTo(W - 50, 95).lineWidth(2).strokeColor('#1a3a5c').stroke();
+
+    // ── Titre du document ─────────────────────────────────────────
+    doc.fontSize(15).font('Helvetica-Bold').fillColor('#1a1a1a')
+       .text(type, 50, 105, { align: 'center', width: W - 100 });
+    doc.fontSize(8.5).font('Helvetica').fillColor('#888888')
+       .text(
+           `Généré le ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`,
+           { align: 'center' }
+       );
+
+    doc.moveDown(0.8);
+    doc.moveTo(50, doc.y).lineTo(W - 50, doc.y).lineWidth(0.5).strokeColor('#cccccc').stroke();
     doc.moveDown(0.5);
 
-    // Section VÉHICULE
-    doc.fontSize(11).font('Helvetica-Bold').fillColor('#333333').text('VÉHICULE');
+    // ── Section VÉHICULE ──────────────────────────────────────────
+    doc.fontSize(11).font('Helvetica-Bold').fillColor('#1a3a5c').text('VÉHICULE');
     doc.moveDown(0.3);
     const vFields = [
-        ['Matricule', enlevement.vehicule_matricule],
-        ['Marque', enlevement.vehicule_marque || '—'],
-        ['Modèle', enlevement.vehicule_modele || '—'],
-        ['Couleur', enlevement.vehicule_couleur || '—'],
-        ['État', enlevement.etat_vehicule || '—'],
+        ['Immatriculation', enlevement.vehicule_matricule],
+        ['Marque',          enlevement.vehicule_marque  || '—'],
+        ['Modèle',          enlevement.vehicule_modele  || '—'],
+        ['Numéro de série', enlevement.vehicule_vin     || '—'],
+        ['Couleur',         enlevement.vehicule_couleur || '—'],
+        ['État',            enlevement.etat_vehicule    || '—'],
     ];
     vFields.forEach(([label, val]) => {
         doc.fontSize(9).font('Helvetica-Bold').fillColor('#555').text(label + ' : ', { continued: true })
@@ -1215,23 +1455,25 @@ function buildPdf(doc, type, enlevement, chauffeur) {
     });
 
     doc.moveDown(0.5);
-    doc.moveTo(50, doc.y).lineTo(550, doc.y).lineWidth(0.5).strokeColor('#dddddd').stroke();
+    doc.moveTo(50, doc.y).lineTo(W - 50, doc.y).lineWidth(0.5).strokeColor('#dddddd').stroke();
     doc.moveDown(0.5);
 
-    // Section ENLÈVEMENT
-    doc.fontSize(11).font('Helvetica-Bold').fillColor('#333333').text('ENLÈVEMENT');
+    // ── Section ENLÈVEMENT ────────────────────────────────────────
+    doc.fontSize(11).font('Helvetica-Bold').fillColor('#1a3a5c').text('ENLÈVEMENT');
     doc.moveDown(0.3);
-    const chauffeurNom = chauffeur ? `${chauffeur.prenom} ${chauffeur.nom} (${chauffeur.matricule_plateau})` : '—';
+    const chauffeurNom = chauffeur
+        ? `${chauffeur.prenom} ${chauffeur.nom} (${chauffeur.matricule_plateau})`
+        : '—';
     const eFields = [
-        ['Agent', enlevement.agent || '—'],
+        ['Agent',          enlevement.agent || '—'],
         ['Cadre de saisie', enlevement.cadre_saisie || '—'],
-        ['Date', fmtDate(enlevement.date_enlevement || enlevement.timestamp)],
-        ['Heure', fmtTime(enlevement.heure_enlevement)],
-        ['Lieu', enlevement.lieu_enlevement || enlevement.gps_adresse || '—'],
-        ['GPS', enlevement.gps_latitude ? `${enlevement.gps_latitude}, ${enlevement.gps_longitude}` : '—'],
-        ['Commentaires', enlevement.commentaires || '—'],
-        ['Autorité', enlevement.autorite_identifiant ? `${enlevement.autorite_identifiant} (${enlevement.autorite_type || '—'})` : '—'],
-        ['Chauffeur', chauffeurNom],
+        ['Date',           fmtDate(enlevement.date_enlevement || enlevement.timestamp)],
+        ['Heure',          fmtTime(enlevement.heure_enlevement)],
+        ['Lieu',           enlevement.lieu_enlevement || enlevement.gps_adresse || '—'],
+        ['GPS',            enlevement.gps_latitude ? `${enlevement.gps_latitude}, ${enlevement.gps_longitude}` : '—'],
+        ['Commentaires',   enlevement.commentaires || '—'],
+        ['Autorité',       enlevement.autorite_identifiant ? `${enlevement.autorite_identifiant} (${enlevement.autorite_type || '—'})` : '—'],
+        ['Chauffeur',      chauffeurNom],
     ];
     eFields.forEach(([label, val]) => {
         doc.fontSize(9).font('Helvetica-Bold').fillColor('#555').text(label + ' : ', { continued: true })
@@ -1254,16 +1496,16 @@ app.get('/api/pdf/rapport-enlevement/:id', authenticate, async (req, res) => {
         const e = result.rows[0];
         const chauffeur = e.chauffeur_prenom ? { prenom: e.chauffeur_prenom, nom: e.chauffeur_nom, matricule_plateau: e.matricule_plateau } : null;
 
-        const doc = new PDFDocument({ margin: 50, size: 'A4' });
+        const buf = await renderPdfToBuffer(doc => {
+            buildPdf(doc, "RAPPORT D'ENLÈVEMENT", e, chauffeur);
+            addFooter(doc);
+        });
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename="rapport-enlevement-${e.vehicule_matricule}.pdf"`);
-        doc.pipe(res);
-
-        buildPdf(doc, "RAPPORT D'ENLÈVEMENT", e, chauffeur);
-
-        doc.end();
+        res.setHeader('Content-Length', buf.length);
+        res.end(buf);
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        if (!res.headersSent) res.status(500).json({ error: error.message });
     }
 });
 
@@ -1287,34 +1529,34 @@ app.get('/api/pdf/bon-entree/:reception_id', authenticate, async (req, res) => {
         const row = result.rows[0];
         const chauffeur = row.chauffeur_prenom ? { prenom: row.chauffeur_prenom, nom: row.chauffeur_nom, matricule_plateau: row.matricule_plateau } : null;
 
-        const doc = new PDFDocument({ margin: 50, size: 'A4' });
+        const buf = await renderPdfToBuffer(doc => {
+            buildPdf(doc, "BON D'ENTRÉE EN FOURRIÈRE", row, chauffeur);
+
+            // Section RÉCEPTION
+            doc.moveDown(0.5);
+            doc.moveTo(50, doc.y).lineTo(545, doc.y).lineWidth(0.5).strokeColor('#dddddd').stroke();
+            doc.moveDown(0.5);
+            doc.fontSize(11).font('Helvetica-Bold').fillColor('#1a3a5c').text('RÉCEPTION EN FOURRIÈRE');
+            doc.moveDown(0.3);
+            const rFields = [
+                ['Agent responsable', row.agent_responsable || '—'],
+                ['Date entrée',       fmtDate(row.date_entree)],
+                ['Heure entrée',      fmtTime(row.heure_entree)],
+                ['Zone de placement', row.zone_placement || '—'],
+                ['Observations',      row.observations || '—'],
+            ];
+            rFields.forEach(([label, val]) => {
+                doc.fontSize(9).font('Helvetica-Bold').fillColor('#555').text(label + ' : ', { continued: true })
+                   .font('Helvetica').fillColor('#000').text(val);
+            });
+            addFooter(doc);
+        });
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename="bon-entree-${row.vehicule_matricule}.pdf"`);
-        doc.pipe(res);
-
-        buildPdf(doc, "BON D'ENTRÉE EN FOURRIÈRE", row, chauffeur);
-
-        // Section RÉCEPTION
-        doc.moveDown(0.5);
-        doc.moveTo(50, doc.y).lineTo(550, doc.y).lineWidth(0.5).strokeColor('#dddddd').stroke();
-        doc.moveDown(0.5);
-        doc.fontSize(11).font('Helvetica-Bold').fillColor('#333333').text('RÉCEPTION EN FOURRIÈRE');
-        doc.moveDown(0.3);
-        const rFields = [
-            ['Agent responsable', row.agent_responsable || '—'],
-            ['Date entrée', fmtDate(row.date_entree)],
-            ['Heure entrée', fmtTime(row.heure_entree)],
-            ['Zone de placement', row.zone_placement || '—'],
-            ['Observations', row.observations || '—'],
-        ];
-        rFields.forEach(([label, val]) => {
-            doc.fontSize(9).font('Helvetica-Bold').fillColor('#555').text(label + ' : ', { continued: true })
-               .font('Helvetica').fillColor('#000').text(val);
-        });
-
-        doc.end();
+        res.setHeader('Content-Length', buf.length);
+        res.end(buf);
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        if (!res.headersSent) res.status(500).json({ error: error.message });
     }
 });
 
@@ -1322,9 +1564,11 @@ app.get('/api/pdf/bon-entree/:reception_id', authenticate, async (req, res) => {
 app.get('/api/pdf/bon-sortie/:enlevement_id', authenticate, async (req, res) => {
     try {
         const result = await pool.query(
-            `SELECT e.*, c.prenom as chauffeur_prenom, c.nom as chauffeur_nom, c.matricule_plateau
+            `SELECT e.*, c.prenom as chauffeur_prenom, c.nom as chauffeur_nom, c.matricule_plateau,
+                    m.dle_nom, m.dle_grade, m.date_mainlevee
              FROM enlevements e
              LEFT JOIN chauffeurs c ON e.chauffeur_id = c.id
+             LEFT JOIN mainlevees m ON m.enlevement_id = e.id AND m.statut = 'utilisee'
              WHERE e.id = $1 AND e.statut = 'sorti'`,
             [req.params.enlevement_id]
         );
@@ -1333,39 +1577,212 @@ app.get('/api/pdf/bon-sortie/:enlevement_id', authenticate, async (req, res) => 
         const e = result.rows[0];
         const chauffeur = e.chauffeur_prenom ? { prenom: e.chauffeur_prenom, nom: e.chauffeur_nom, matricule_plateau: e.matricule_plateau } : null;
 
-        const doc = new PDFDocument({ margin: 50, size: 'A4' });
+        const buf = await renderPdfToBuffer(doc => {
+            const ML = 72;
+            const TW = doc.page.width - ML * 2;
+            const LH = 16; // line height 10pt
+            const LH11 = 18; // line height 11pt
+            let y = 55;
+
+            // ── En-tête centré ────────────────────────────────────────────
+            doc.fontSize(11).font('Helvetica-Bold').fillColor('#000')
+               .text('Direction Générale du Cadre de Vie', ML, y, { align: 'center', width: TW, lineBreak: false });
+            y += LH11;
+            doc.text('Direction de la Lutte contre les Encombrements', ML, y, { align: 'center', width: TW, lineBreak: false });
+            y += LH11;
+            doc.text('Fourrière de Yenne – Dakar', ML, y, { align: 'center', width: TW, lineBreak: false });
+            y += LH11 * 2.5;
+
+            // ── Titre souligné ────────────────────────────────────────────
+            doc.fontSize(13).font('Helvetica-Bold')
+               .text('BON DE SORTIE DE VEHICULE', ML, y, { align: 'center', width: TW, lineBreak: false });
+            y += 20;
+            const tW = 265, tX = ML + (TW - tW) / 2;
+            doc.moveTo(tX, y).lineTo(tX + tW, y).lineWidth(1).strokeColor('#000').stroke();
+            y += LH11 * 2;
+
+            // ── Numéro du Bon + Date ───────────────────────────────────────
+            const sortieDate = e.sortie_date ? new Date(e.sortie_date) : new Date();
+            const sDay  = String(sortieDate.getDate()).padStart(2, '0');
+            const sMois = String(sortieDate.getMonth() + 1).padStart(2, '0');
+            const sAn   = String(sortieDate.getFullYear()).slice(2);
+            doc.fontSize(10).font('Helvetica').fillColor('#000')
+               .text(`Numéro du Bon : ${e.id ? e.id.slice(0,8).toUpperCase() : ''}`, ML, y, { align: 'right', width: TW, lineBreak: false });
+            y += LH;
+            doc.text(`Date : ${sDay} / ${sMois} / 20${sAn}`, ML, y, { align: 'right', width: TW, lineBreak: false });
+            y += LH * 2;
+
+            // ── Corps ─────────────────────────────────────────────────────
+            doc.text('Nous, soussignés, attestons que :', ML, y, { width: TW, lineBreak: false });
+            y += LH;
+            doc.text(`Nom du propriétaire / titulaire : ${e.sortie_proprietaire || ''}`, ML, y, { width: TW, lineBreak: false });
+            y += LH;
+            doc.text(`Adresse : ${e.proprietaire_adresse || ''}`, ML, y, { width: TW, lineBreak: false });
+            y += LH;
+            doc.text(`Téléphone : ${e.proprietaire_telephone || ''}`, ML, y, { width: TW, lineBreak: false });
+            y += LH * 2;
+
+            // ── Véhicule ──────────────────────────────────────────────────
+            doc.text('Véhicule :', ML, y, { width: TW, lineBreak: false });
+            y += LH * 1.5;
+            [
+                `Marque : ${e.vehicule_marque || ''}`,
+                `Modèle : ${e.vehicule_modele || ''}`,
+                `Immatriculation : ${e.vehicule_matricule || ''}`,
+                `Numéro de série / VIN : ${e.vehicule_vin || ''}`,
+            ].forEach(l => {
+                doc.text(`    -   ${l}`, ML, y, { width: TW, lineBreak: false });
+                y += LH;
+            });
+            y += LH;
+
+            // ── Paragraphes ───────────────────────────────────────────────
+            const p1 = 'Ont été régularisés et payés tous les frais relatifs à la fourrière (garde, enlèvement, taxes, etc.) liés au véhicule mentionné ci-dessus.';
+            doc.text(p1, ML, y, { width: TW });
+            y += doc.heightOfString(p1, { width: TW }) + LH;
+
+            const p2 = "Ce bon autorise la restitution du véhicule au propriétaire ou à son représentant dûment habilité, sur présentation de ce document et des pièces requises.";
+            doc.text(p2, ML, y, { width: TW });
+            y += doc.heightOfString(p2, { width: TW }) + LH;
+
+            // ── Montant + référence ───────────────────────────────────────
+            const montant = e.sortie_montant_paye ? Number(e.sortie_montant_paye).toLocaleString('fr-FR') : '';
+            doc.text(`    -   Montant total payé : ${montant}  FCFA`, ML, y, { width: TW, lineBreak: false });
+            y += LH;
+            doc.text(`    -   Référence de paiement : ${e.reference_paiement || ''}`, ML, y, { width: TW, lineBreak: false });
+            y += LH * 3.5;
+
+            // ── Fait à Dakar ──────────────────────────────────────────────
+            doc.text(`Fait à Dakar, le ${sDay} / ${sMois} / 20${sAn}`, ML, y, { align: 'right', width: TW, lineBreak: false });
+            y += LH * 2.5;
+
+            // ── Signature ─────────────────────────────────────────────────
+            doc.text('Signature et cachet de la Fourrière :', ML, y, { align: 'right', width: TW, lineBreak: false });
+            y += LH;
+            doc.text('(Nom, fonction, cachet officiel)', ML, y, { align: 'right', width: TW, lineBreak: false });
+        });
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename="bon-sortie-${e.vehicule_matricule}.pdf"`);
-        doc.pipe(res);
+        res.setHeader('Content-Length', buf.length);
+        res.end(buf);
+    } catch (error) {
+        if (!res.headersSent) res.status(500).json({ error: error.message });
+    }
+});
 
-        buildPdf(doc, 'BON DE SORTIE DE FOURRIÈRE', e, chauffeur);
+// GET /api/pdf/mainlevee/:mainlevee_id
+app.get('/api/pdf/mainlevee/:mainlevee_id', authenticate, async (req, res) => {
+    try {
+        if (!['admin', 'dle_office', 'fourriere'].includes(req.user.role)) return res.status(403).json({ error: 'Accès refusé' });
+        const result = await pool.query(
+            `SELECT m.*, e.vehicule_matricule, e.vehicule_marque, e.vehicule_modele, e.vehicule_couleur,
+                    e.vehicule_vin, e.etat_vehicule, e.cadre_saisie, e.date_enlevement, e.timestamp
+             FROM mainlevees m
+             JOIN enlevements e ON m.enlevement_id = e.id
+             WHERE m.id = $1`,
+            [req.params.mainlevee_id]
+        );
+        if (result.rows.length === 0) return res.status(404).json({ error: 'Mainlevée non trouvée' });
 
-        // Section SORTIE
-        doc.moveDown(0.5);
-        doc.moveTo(50, doc.y).lineTo(550, doc.y).lineWidth(0.5).strokeColor('#dddddd').stroke();
-        doc.moveDown(0.5);
-        doc.fontSize(11).font('Helvetica-Bold').fillColor('#333333').text('SORTIE DE FOURRIÈRE');
-        doc.moveDown(0.3);
-        const sFields = [
-            ['Agent sortie', e.sortie_agent || '—'],
-            ['Propriétaire', e.sortie_proprietaire || '—'],
-            ['Date de main levée', fmtDate(e.date_main_levee)],
-            ['Bon de sortie Sendra', e.bon_sortie_sendra || '—'],
-            ['Date paiement / VAE', fmtDate(e.date_paiement_vae)],
-            ['Date sortie', fmtDate(e.sortie_date)],
-            ['Heure sortie', fmtTime(e.sortie_heure)],
-            ['Montant payé', e.sortie_montant_paye ? `${e.sortie_montant_paye} FCFA` : '—'],
-            ['Mode de paiement', e.sortie_mode_paiement || '—'],
-            ['Motif de sortie', e.motif_sortie || '—'],
-        ];
-        sFields.forEach(([label, val]) => {
-            doc.fontSize(9).font('Helvetica-Bold').fillColor('#555').text(label + ' : ', { continued: true })
-               .font('Helvetica').fillColor('#000').text(val);
+        const m = result.rows[0];
+        const buf = await renderPdfToBuffer(doc => {
+            const ML = 72;
+            const TW = doc.page.width - ML * 2;
+            const LH = 16;
+            const LH11 = 18;
+            let y = 55;
+
+            // ── En-tête centré ────────────────────────────────────────────
+            doc.fontSize(11).font('Helvetica-Bold').fillColor('#000')
+               .text("Ministère de l'Environnement et de la Transition Ecologique", ML, y, { align: 'center', width: TW, lineBreak: false });
+            y += LH11;
+            doc.fontSize(11).font('Helvetica-Bold')
+               .text('Direction Générale du Cadre de Vie', ML, y, { align: 'center', width: TW, lineBreak: false });
+            y += LH11;
+            doc.fontSize(11).font('Helvetica-Bold')
+               .text('Direction de la Lutte contre les Encombrements', ML, y, { align: 'center', width: TW, lineBreak: false });
+            y += LH11;
+            doc.fontSize(11).font('Helvetica-Bold')
+               .text('Fourrière de Yenne – Dakar', ML, y, { align: 'center', width: TW, lineBreak: false });
+            y += LH11 * 3;
+
+            // ── Titre souligné ────────────────────────────────────────────
+            doc.fontSize(13).font('Helvetica-Bold')
+               .text('ATTESTATION DE MAINLEVÉE', ML, y, { align: 'center', width: TW, lineBreak: false });
+            const titleTextW = 270;
+            const titleX = ML + (TW - titleTextW) / 2;
+            y += 16;
+            doc.moveTo(titleX, y).lineTo(titleX + titleTextW, y)
+               .lineWidth(1).strokeColor('#000').stroke();
+            y += LH11 * 2.5;
+
+            // ── Corps ─────────────────────────────────────────────────────
+            doc.fontSize(10).font('Helvetica').fillColor('#000')
+               .text('Je soussigné(e),', ML, y, { width: TW, lineBreak: false });
+            y += LH;
+            doc.fontSize(10).font('Helvetica')
+               .text(`Nom : ${m.dle_nom || ''}`, ML, y, { width: TW, lineBreak: false });
+            y += LH;
+            doc.fontSize(10).font('Helvetica')
+               .text(`Grade / Fonction : ${m.dle_grade || ''}`, ML, y, { width: TW, lineBreak: false });
+            y += LH;
+            doc.fontSize(10).font('Helvetica')
+               .text('Direction : Direction de la Lutte contre les Encombrements', ML, y, { width: TW, lineBreak: false });
+            y += LH;
+            doc.fontSize(10).font('Helvetica')
+               .text('Fourrière : Fourrière de Yène – Dakar', ML, y, { width: TW, lineBreak: false });
+            y += LH * 1.8;
+
+            // ── Certifie ──────────────────────────────────────────────────
+            const certTxt = "Certifie par la présente avoir LEVÉ LA MESURE D'IMMOBILISATION / DE MISE EN FOURRIÈRE du véhicule ci-après désigné, conformément aux dispositions en vigueur :";
+            doc.fontSize(10).font('Helvetica')
+               .text(certTxt, ML, y, { width: TW });
+            y += doc.heightOfString(certTxt, { width: TW }) + LH * 1.2;
+
+            // ── Liste véhicule ────────────────────────────────────────────
+            [
+                `Marque : ${m.vehicule_marque || ''}`,
+                `Modèle : ${m.vehicule_modele || ''}`,
+                `Immatriculation : ${m.vehicule_matricule || ''}`,
+                `Numéro de série / VIN : ${m.vehicule_vin || ''}`,
+                `Motif de mise en fourrière : ${m.cadre_saisie || ''}`,
+                `Date de mise en fourrière : ${fmtDate(m.date_enlevement || m.timestamp)}`,
+            ].forEach(ligne => {
+                doc.fontSize(10).font('Helvetica')
+                   .text(`    -  ${ligne}`, ML, y, { width: TW, lineBreak: false });
+                y += LH;
+            });
+            y += LH;
+
+            // ── Paragraphe conclusif ──────────────────────────────────────
+            const conclTxt = "La présente mainlevée est accordée après conformité des pièces exigées et/ou décision administrative favorable, permettant au propriétaire ou à son représentant dûment mandaté de procéder à la sortie du véhicule auprès de la fourrière.";
+            doc.fontSize(10).font('Helvetica')
+               .text(conclTxt, ML, y, { width: TW });
+            y += doc.heightOfString(conclTxt, { width: TW }) + LH * 3;
+
+            // ── Fait à Dakar ──────────────────────────────────────────────
+            const mDate = m.date_mainlevee ? new Date(m.date_mainlevee) : new Date();
+            const mDay   = String(mDate.getDate()).padStart(2, '0');
+            const mMois  = String(mDate.getMonth() + 1).padStart(2, '0');
+            const mAnnee = String(mDate.getFullYear()).slice(2);
+            doc.fontSize(10).font('Helvetica')
+               .text(`Fait à Dakar, le ${mDay} / ${mMois} / 20${mAnnee}`, ML, y, { align: 'right', width: TW, lineBreak: false });
+            y += LH * 2.5;
+
+            // ── Signature ─────────────────────────────────────────────────
+            doc.fontSize(10).font('Helvetica')
+               .text('Signature et cachet', ML, y, { align: 'right', width: TW, lineBreak: false });
+            y += LH;
+            doc.fontSize(10).font('Helvetica')
+               .text('(Nom, grade, cachet officiel)', ML, y, { align: 'right', width: TW, lineBreak: false });
         });
 
-        doc.end();
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="mainlevee-${m.vehicule_matricule}.pdf"`);
+        res.setHeader('Content-Length', buf.length);
+        res.end(buf);
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        if (!res.headersSent) res.status(500).json({ error: error.message });
     }
 });
 

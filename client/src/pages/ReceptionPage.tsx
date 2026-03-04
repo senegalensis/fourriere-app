@@ -3,35 +3,29 @@ import { useNavigate } from 'react-router-dom'
 import api from '@/api/client'
 import { useAuth } from '@/hooks/useAuth'
 import Spinner from '@/components/ui/Spinner'
+import Badge from '@/components/ui/Badge'
 
 interface EnlevementData {
   id: string
   timestamp: string
-  // Véhicule
   vehicule_matricule: string
   vehicule_marque: string | null
   vehicule_modele: string | null
   vehicule_couleur: string | null
-  // Détails
   cadre_saisie: string | null
   etat_vehicule: string | null
   commentaires: string | null
-  // GPS
   gps_latitude: number | null
   gps_longitude: number | null
   gps_adresse: string | null
-  // Autorité
   autorite_identifiant: string | null
   autorite_type: string | null
-  // Agents
   agent: string
   agent_collecte: string | null
   responsable: string | null
-  // Enlèvement
   date_enlevement: string | null
   heure_enlevement: string | null
   lieu_enlevement: string | null
-  // Chauffeur
   chauffeur_prenom: string | null
   chauffeur_nom: string | null
   matricule_plateau: string | null
@@ -50,19 +44,21 @@ interface PhotoSlot {
 
 const ZONES = ['Sendra', 'Ministere', 'Ville de Dakar'] as const
 
-const ETAT_COLORS: Record<string, string> = {
-  Bon: 'bg-green-100 text-green-800',
-  Dégradé: 'bg-yellow-100 text-yellow-800',
-  Accidenté: 'bg-orange-100 text-orange-800',
-  Épave: 'bg-red-100 text-red-800',
+type EtatVariant = 'success' | 'warning' | 'danger' | 'neutral'
+
+const ETAT_VARIANT: Record<string, EtatVariant> = {
+  Bon: 'success',
+  Dégradé: 'warning',
+  Accidenté: 'danger',
+  Épave: 'danger',
 }
 
 function InfoRow({ label, value }: { label: string; value: string | null | undefined }) {
   if (!value) return null
   return (
-    <div className="py-2 border-b border-blue-100 last:border-0">
-      <span className="text-xs font-semibold text-blue-500 uppercase tracking-wide">{label}</span>
-      <p className="text-sm text-gray-900 mt-0.5">{value}</p>
+    <div className="py-2.5 border-b border-slate-100 last:border-0">
+      <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{label}</span>
+      <p className="text-sm text-slate-900 mt-0.5 font-medium">{value}</p>
     </div>
   )
 }
@@ -71,17 +67,14 @@ export default function ReceptionPage() {
   const navigate = useNavigate()
   const { user } = useAuth()
 
-  // Phase 1 : recherche
   const [searchMatricule, setSearchMatricule] = useState('')
   const [searching, setSearching] = useState(false)
   const [searchError, setSearchError] = useState('')
 
-  // Phase 2 : données d'enlèvement
   const [enlevement, setEnlevement] = useState<EnlevementData | null>(null)
   const [enlevementPhotos, setEnlevementPhotos] = useState<EnlevementPhoto[]>([])
   const [loadingPhotos, setLoadingPhotos] = useState(false)
 
-  // Phase 2 : formulaire de réception
   const [agentResponsable, setAgentResponsable] = useState(user?.username || '')
   const [dateEntree, setDateEntree] = useState(new Date().toISOString().split('T')[0])
   const [heureEntree, setHeureEntree] = useState(new Date().toTimeString().slice(0, 5))
@@ -117,7 +110,6 @@ export default function ReceptionPage() {
         setSearchError(data.message || 'Aucun enlèvement en cours pour ce matricule')
       } else {
         setEnlevement(data.enlevement)
-        // Charger les photos d'enlèvement en parallèle
         setLoadingPhotos(true)
         api.get(`/photos/${data.enlevement.id}`)
           .then(({ data: photosData }) => setEnlevementPhotos(photosData))
@@ -213,33 +205,35 @@ export default function ReceptionPage() {
     setSubmitError('')
   }
 
-  // ── Écran de succès ─────────────────────────────────────────────
+  // ── Écran de succès ──────────────────────────────────────────────
   if (successOrdre !== null) {
     return (
-      <div className="max-w-md mx-auto px-4 py-12 text-center">
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-8">
-          <div className="text-6xl mb-4">✅</div>
-          <h2 className="text-xl font-bold text-gray-900 mb-1">Véhicule réceptionné</h2>
-          <p className="text-sm text-gray-500 mb-6">
-            Le véhicule <span className="font-mono font-bold text-gray-800">{successMatricule}</span> a bien été
+      <div className="max-w-md mx-auto py-12 text-center">
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-8">
+          <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-8 h-8 text-green-600">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+            </svg>
+          </div>
+          <h2 className="text-xl font-bold text-slate-900 mb-1">Véhicule réceptionné</h2>
+          <p className="text-sm text-slate-500 mb-6">
+            Le véhicule <span className="font-mono font-bold text-slate-800">{successMatricule}</span> a bien été
             enregistré à la fourrière.
           </p>
-          <div className="bg-primary-50 rounded-xl py-6 mb-6">
-            <p className="text-xs font-semibold text-primary-500 uppercase tracking-widest mb-2">
-              Ordre d'entrée
-            </p>
+          <div className="bg-primary-50 rounded-2xl py-6 mb-6">
+            <p className="text-xs font-semibold text-primary-500 uppercase tracking-widest mb-2">Ordre d'entrée</p>
             <p className="text-6xl font-extrabold text-primary-700">#{successOrdre}</p>
           </div>
           <div className="flex gap-3">
             <button
               onClick={resetAll}
-              className="flex-1 py-3 border border-gray-300 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50"
+              className="btn-secondary flex-1 py-3"
             >
               Nouveau véhicule
             </button>
             <button
               onClick={() => navigate('/reception')}
-              className="flex-1 py-3 bg-primary-600 text-white rounded-xl text-sm font-semibold hover:bg-primary-700"
+              className="btn-primary flex-1 py-3"
             >
               Voir la liste
             </button>
@@ -249,16 +243,16 @@ export default function ReceptionPage() {
     )
   }
 
-  // ── Phase 1 : Recherche ─────────────────────────────────────────
+  // ── Phase 1 : Recherche ──────────────────────────────────────────
   if (!enlevement) {
     return (
-      <div className="max-w-lg mx-auto px-4 py-10">
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">Réception véhicule</h1>
-        <p className="text-sm text-gray-500 mb-8">
+      <div className="max-w-lg py-6">
+        <h1 className="text-2xl font-bold text-slate-800 mb-1">Réception véhicule</h1>
+        <p className="text-sm text-slate-500 mb-8">
           Entrez le matricule du véhicule pour vérifier son enlèvement et procéder à la réception.
         </p>
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-          <label className="block text-sm font-medium text-gray-700 mb-2">Matricule du véhicule</label>
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+          <label className="block text-sm font-medium text-slate-700 mb-2">Matricule du véhicule</label>
           <div className="flex gap-3">
             <input
               type="text"
@@ -267,21 +261,24 @@ export default function ReceptionPage() {
               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
               placeholder="Ex : DK-123-AB"
               autoFocus
-              className="flex-1 border border-gray-300 rounded-lg px-4 py-3 text-base font-mono uppercase tracking-widest focus:outline-none focus:ring-2 focus:ring-primary-500"
+              className="flex-1 border border-slate-300 rounded-lg px-4 py-3 text-base font-mono uppercase tracking-widest focus:outline-none focus:ring-2 focus:ring-primary-500"
             />
             <button
               onClick={handleSearch}
               disabled={searching || !searchMatricule.trim()}
-              className="px-6 py-3 bg-primary-600 text-white rounded-lg font-medium hover:bg-primary-700 disabled:opacity-50 flex items-center gap-2"
+              className="btn-primary px-6 py-3 flex items-center gap-2"
             >
-              {searching ? <Spinner size="sm" /> : <span>🔍</span>}
+              {searching ? <Spinner size="sm" /> : (
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+                </svg>
+              )}
               Rechercher
             </button>
           </div>
           {searchError && (
-            <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700 flex items-start gap-2">
-              <span className="text-lg">⚠️</span>
-              <span>{searchError}</span>
+            <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+              {searchError}
             </div>
           )}
         </div>
@@ -289,56 +286,54 @@ export default function ReceptionPage() {
     )
   }
 
-  // ── Phase 2 : Infos + formulaire de réception ───────────────────
+  // ── Phase 2 : Infos + formulaire de réception ────────────────────
   return (
-    <div className="max-w-2xl mx-auto px-4 py-6 space-y-5">
+    <div className="max-w-2xl space-y-5">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Réception véhicule</h1>
+        <h1 className="text-2xl font-bold text-slate-800">Réception véhicule</h1>
         <button
           type="button"
           onClick={resetAll}
-          className="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1"
+          className="text-sm text-slate-500 hover:text-slate-700 flex items-center gap-1"
         >
           ← Autre matricule
         </button>
       </div>
 
-      {/* ── Bloc : Véhicule ── */}
-      <section className="bg-blue-50 border border-blue-200 rounded-xl overflow-hidden">
-        <div className="bg-blue-600 px-5 py-3 flex items-center justify-between">
+      {/* Bloc Véhicule */}
+      <section className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+        <div className="bg-primary-600 px-5 py-3 flex items-center justify-between">
           <h2 className="text-white font-semibold text-sm uppercase tracking-wide">Véhicule</h2>
-          <span className="font-mono text-white font-bold text-lg tracking-widest">
-            {enlevement.vehicule_matricule}
-          </span>
+          <span className="font-mono text-white font-bold text-lg tracking-widest">{enlevement.vehicule_matricule}</span>
         </div>
         <div className="p-5 grid grid-cols-2 gap-x-6">
           <InfoRow label="Marque" value={enlevement.vehicule_marque} />
           <InfoRow label="Modèle" value={enlevement.vehicule_modele} />
           <InfoRow label="Couleur" value={enlevement.vehicule_couleur} />
-          <div className="py-2 border-b border-blue-100">
-            <span className="text-xs font-semibold text-blue-500 uppercase tracking-wide">État</span>
+          <div className="py-2.5 border-b border-slate-100">
+            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">État</span>
             <p className="mt-0.5">
               {enlevement.etat_vehicule ? (
-                <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${ETAT_COLORS[enlevement.etat_vehicule] || 'bg-gray-100 text-gray-700'}`}>
+                <Badge variant={ETAT_VARIANT[enlevement.etat_vehicule] ?? 'neutral'}>
                   {enlevement.etat_vehicule}
-                </span>
+                </Badge>
               ) : '—'}
             </p>
           </div>
         </div>
       </section>
 
-      {/* ── Bloc : Enlèvement ── */}
-      <section className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-        <div className="bg-gray-700 px-5 py-3">
+      {/* Bloc Enlèvement */}
+      <section className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+        <div className="bg-slate-700 px-5 py-3">
           <h2 className="text-white font-semibold text-sm uppercase tracking-wide">Détails de l'enlèvement</h2>
         </div>
-        <div className="p-5 space-y-0 divide-y divide-gray-100">
+        <div className="p-5">
           <InfoRow label="Motif de saisie" value={enlevement.cadre_saisie} />
           {enlevement.date_enlevement && (
-            <div className="py-2">
-              <span className="text-xs font-semibold text-blue-500 uppercase tracking-wide">Date & heure</span>
-              <p className="text-sm text-gray-900 mt-0.5">
+            <div className="py-2.5 border-b border-slate-100">
+              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Date &amp; heure</span>
+              <p className="text-sm text-slate-900 mt-0.5 font-medium">
                 {new Date(enlevement.date_enlevement).toLocaleDateString('fr-FR')}
                 {enlevement.heure_enlevement && ` à ${enlevement.heure_enlevement.slice(0, 5)}`}
               </p>
@@ -353,26 +348,26 @@ export default function ReceptionPage() {
         </div>
       </section>
 
-      {/* ── Bloc : Autorité ── */}
+      {/* Bloc Autorité */}
       {(enlevement.autorite_type || enlevement.autorite_identifiant) && (
-        <section className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-          <div className="bg-gray-700 px-5 py-3">
+        <section className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+          <div className="bg-slate-700 px-5 py-3">
             <h2 className="text-white font-semibold text-sm uppercase tracking-wide">Autorité requérante</h2>
           </div>
-          <div className="p-5 divide-y divide-gray-100">
+          <div className="p-5">
             <InfoRow label="Type" value={enlevement.autorite_type} />
             <InfoRow label="Identifiant" value={enlevement.autorite_identifiant} />
           </div>
         </section>
       )}
 
-      {/* ── Bloc : Chauffeur ── */}
+      {/* Bloc Chauffeur */}
       {(enlevement.chauffeur_prenom || enlevement.chauffeur_nom) && (
-        <section className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-          <div className="bg-gray-700 px-5 py-3">
+        <section className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+          <div className="bg-slate-700 px-5 py-3">
             <h2 className="text-white font-semibold text-sm uppercase tracking-wide">Chauffeur plateau</h2>
           </div>
-          <div className="p-5 divide-y divide-gray-100">
+          <div className="p-5">
             <InfoRow
               label="Nom"
               value={[enlevement.chauffeur_prenom, enlevement.chauffeur_nom].filter(Boolean).join(' ')}
@@ -382,9 +377,9 @@ export default function ReceptionPage() {
         </section>
       )}
 
-      {/* ── Bloc : Photos d'enlèvement ── */}
-      <section className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-        <div className="bg-gray-700 px-5 py-3">
+      {/* Bloc Photos d'enlèvement */}
+      <section className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+        <div className="bg-slate-700 px-5 py-3">
           <h2 className="text-white font-semibold text-sm uppercase tracking-wide">
             Photos prises lors de l'enlèvement
           </h2>
@@ -393,16 +388,12 @@ export default function ReceptionPage() {
           {loadingPhotos ? (
             <div className="flex justify-center py-4"><Spinner /></div>
           ) : enlevementPhotos.length === 0 ? (
-            <p className="text-sm text-gray-400 italic text-center py-3">Aucune photo disponible</p>
+            <p className="text-sm text-slate-400 italic text-center py-3">Aucune photo disponible</p>
           ) : (
             <div className="grid grid-cols-3 gap-3">
               {enlevementPhotos.map((photo) => (
-                <div key={photo.id} className="relative aspect-square rounded-lg overflow-hidden border border-gray-200 bg-gray-50">
-                  <img
-                    src={photo.data}
-                    alt={photo.type_photo}
-                    className="w-full h-full object-cover"
-                  />
+                <div key={photo.id} className="relative aspect-square rounded-xl overflow-hidden border border-slate-200 bg-slate-50">
+                  <img src={photo.data} alt={photo.type_photo} className="w-full h-full object-cover" />
                   <span className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[10px] text-center py-0.5 capitalize">
                     {photo.type_photo}
                   </span>
@@ -413,99 +404,94 @@ export default function ReceptionPage() {
         </div>
       </section>
 
-      {/* ── Formulaire de réception ── */}
+      {/* Formulaire de réception */}
       <form onSubmit={handleSubmit} className="space-y-5">
-        <section className="bg-white border-2 border-primary-200 rounded-xl overflow-hidden">
+        <section className="bg-white rounded-2xl border-2 border-primary-200 overflow-hidden">
           <div className="bg-primary-600 px-5 py-3">
             <h2 className="text-white font-semibold text-sm uppercase tracking-wide">Réception — à remplir</h2>
           </div>
           <div className="p-5 space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-slate-700 mb-1">
                 Agent responsable <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
                 value={agentResponsable}
                 onChange={(e) => setAgentResponsable(e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                className="input-field"
                 required
               />
             </div>
-
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-slate-700 mb-1">
                   Date d'entrée <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="date"
                   value={dateEntree}
                   onChange={(e) => setDateEntree(e.target.value)}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  className="input-field"
                   required
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-slate-700 mb-1">
                   Heure d'entrée <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="time"
                   value={heureEntree}
                   onChange={(e) => setHeureEntree(e.target.value)}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  className="input-field"
                   required
                 />
               </div>
             </div>
-
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-slate-700 mb-1">
                 Zone de placement <span className="text-red-500">*</span>
               </label>
               <select
                 value={zonePlacement}
                 onChange={(e) => setZonePlacement(e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                className="input-field"
                 required
               >
                 <option value="">— Sélectionner une zone —</option>
-                {ZONES.map((z) => (
-                  <option key={z} value={z}>{z}</option>
-                ))}
+                {ZONES.map((z) => <option key={z} value={z}>{z}</option>)}
               </select>
             </div>
-
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Observations</label>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Observations</label>
               <textarea
                 value={observations}
                 onChange={(e) => setObservations(e.target.value)}
                 rows={2}
-                placeholder="Remarques éventuelles..."
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 resize-none"
+                placeholder="Remarques éventuelles…"
+                className="input-field resize-none"
               />
             </div>
           </div>
         </section>
 
-        {/* Photos de dommages (optionnelles) */}
-        <section className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        {/* Photos de dommages */}
+        <section className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
           <div className="bg-orange-500 px-5 py-3">
             <h2 className="text-white font-semibold text-sm uppercase tracking-wide">
               Photos de dommages constatés — optionnel
             </h2>
           </div>
           <div className="p-5">
-            <p className="text-xs text-gray-500 mb-4">
+            <p className="text-xs text-slate-500 mb-4">
               À prendre uniquement si le véhicule présente des dommages survenus durant le transport.
             </p>
             <div className="grid grid-cols-3 gap-3">
               {photos.map((photo, index) => (
                 <div key={index}>
                   {photo.preview ? (
-                    <div className="relative aspect-square rounded-lg overflow-hidden border border-gray-200">
+                    <div className="relative aspect-square rounded-xl overflow-hidden border border-slate-200">
                       <img src={photo.preview} alt={`Dommage ${index + 1}`} className="w-full h-full object-cover" />
                       <button
                         type="button"
@@ -516,8 +502,11 @@ export default function ReceptionPage() {
                       </button>
                     </div>
                   ) : (
-                    <label className="flex flex-col items-center justify-center aspect-square rounded-lg border-2 border-dashed border-orange-300 cursor-pointer hover:border-orange-400 hover:bg-orange-50 transition-colors">
-                      <span className="text-2xl text-orange-300">📷</span>
+                    <label className="flex flex-col items-center justify-center aspect-square rounded-xl border-2 border-dashed border-orange-300 cursor-pointer hover:border-orange-400 hover:bg-orange-50 transition-colors">
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-8 h-8 text-orange-300">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 00-1.134-.175 2.31 2.31 0 01-1.64-1.055l-.822-1.316a2.192 2.192 0 00-1.736-1.039 48.774 48.774 0 00-5.232 0 2.192 2.192 0 00-1.736 1.039l-.821 1.316z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 12.75a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0zM18.75 10.5h.008v.008h-.008V10.5z" />
+                      </svg>
                       <span className="text-xs text-orange-400 mt-1">Photo {index + 1}</span>
                       <input
                         ref={fileRefs[index]}
@@ -536,7 +525,7 @@ export default function ReceptionPage() {
         </section>
 
         {submitError && (
-          <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+          <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
             {submitError}
           </div>
         )}
